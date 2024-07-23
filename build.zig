@@ -173,6 +173,21 @@ pub fn build(b: *std.Build) void {
     overlayfs_configure.setCwd(b.path("fuse-overlayfs"));
     overlayfs_configure.step.dependOn(&overlayfs_autogen.step);
 
+    const libfuse_mkdir_build = b.addSystemCommand(&[_][]const u8{
+        "mkdir",
+        "-p",
+        "build",
+    });
+    libfuse_mkdir_build.setCwd(b.path("libfuse"));
+
+    const configure_libfuse = b.addSystemCommand(&[_][]const u8{
+        "meson",
+        "setup",
+        "..",
+    });
+    configure_libfuse.setCwd(b.path("libfuse/build"));
+    configure_libfuse.step.dependOn(&libfuse_mkdir_build.step);
+
     const runtime = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .optimize = optimize,
@@ -283,14 +298,32 @@ pub fn build(b: *std.Build) void {
     crun_configure.setCwd(b.path("crun"));
     crun_configure.step.dependOn(&crun_autogen.step);
 
+    const libocspec_generate_files = b.addSystemCommand(&[_][]const u8{
+        "make",
+        "src/ocispec/runtime_spec_schema_config_schema.c",
+        "src/ocispec/runtime_spec_schema_config_zos.c",
+        "src/ocispec/runtime_spec_schema_config_vm.c",
+        "src/ocispec/runtime_spec_schema_config_windows.c",
+        "src/ocispec/runtime_spec_schema_config_solaris.c",
+        "src/ocispec/runtime_spec_schema_config_linux.c",
+        "src/ocispec/runtime_spec_schema_defs.c",
+        "src/ocispec/runtime_spec_schema_defs_linux.c",
+        "src/ocispec/runtime_spec_schema_defs_windows.c",
+        "src/ocispec/runtime_spec_schema_defs_zos.c",
+    });
+    libocspec_generate_files.setCwd(b.path("crun/libocispec"));
+    libocspec_generate_files.step.dependOn(&crun_configure.step);
+
     if (!skip_crun_build) {
         runtime_x86_64.step.dependOn(&squashfuse_make_generate_swap.step);
         runtime_x86_64.step.dependOn(&overlayfs_configure.step);
-        runtime_x86_64.step.dependOn(&crun_configure.step);
+        runtime_x86_64.step.dependOn(&libocspec_generate_files.step);
+        runtime_x86_64.step.dependOn(&configure_libfuse.step);
 
         runtime_aarch64.step.dependOn(&squashfuse_make_generate_swap.step);
         runtime_aarch64.step.dependOn(&overlayfs_configure.step);
-        runtime_aarch64.step.dependOn(&crun_configure.step);
+        runtime_aarch64.step.dependOn(&libocspec_generate_files.step);
+        runtime_aarch64.step.dependOn(&configure_libfuse.step);
     }
 
     const go_cpu_arch = switch (target.query.cpu_arch orelse target.result.cpu.arch) {
@@ -405,6 +438,26 @@ pub fn build(b: *std.Build) void {
     dockerc.root_module.addImport("clap", clap.module("clap"));
 
     b.installArtifact(dockerc);
+
+    const replace_bin = b.addExecutable(.{
+        .name = "replace",
+        .root_source_file = b.path("src/replace.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
+    replace_bin.root_module.addAnonymousImport(
+        "runtime_x86_64",
+        .{ .root_source_file = runtime_x86_64.getEmittedBin() },
+    );
+
+    replace_bin.root_module.addAnonymousImport(
+        "runtime_aarch64",
+        .{ .root_source_file = runtime_aarch64.getEmittedBin() },
+    );
+
+    b.installArtifact(replace_bin);
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default

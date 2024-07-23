@@ -260,7 +260,7 @@ pub fn main() !void {
 
     if (ret != 0) {
         if (err != null) {
-            std.debug.panic("failed to run container ({d}): {s}\n", .{ ret, err.*.msg });
+            std.debug.panic("failed to run container (status: {}) ({d}): {s}\n", .{ err.*.status, ret, err.*.msg });
         } else {
             std.debug.panic("failed to run container ({d})\n", .{ret});
         }
